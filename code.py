@@ -1,8 +1,7 @@
 import time
 import board
 import math
-from adafruit_as7341 import AS7341
-from adafruit_as7341 import Gain
+import adafruit_tcs34725
 import usb_hid
 from adafruit_hid.keyboard import Keyboard
 from adafruit_hid.keycode import Keycode
@@ -16,7 +15,12 @@ button = digitalio.DigitalInOut(board.A1)
 button.switch_to_input(pull=digitalio.Pull.UP)
 
 i2c = board.I2C()  # uses board.SCL and board.SDA
-sensor = AS7341(i2c)
+sensor = adafruit_tcs34725.TCS34725(i2c)
+
+# Change sensor integration time to values between 2.4 and 614.4 milliseconds
+sensor.integration_time = 30
+# Change sensor gain to 1, 4, 16, or 60
+sensor.gain = 1
 
 keyboard = Keyboard(usb_hid.devices)
 key_down = None
@@ -59,33 +63,75 @@ PINK.rgb = (255,0,255)
 PINK.key = Keycode.W
 
 values = [
-    (WHITE, (59, 464, 371, 547, 549, 568, 558, 382)), #paper
-    (BLACK, (5, 38, 31, 48, 51, 51, 48, 32)), # table
-    (RED, (17, 77, 69, 76, 88, 213, 389, 263)), # LEGO
-    (RED, (25, 120, 106, 128, 125, 294, 516, 364)), # dot sticker
-    (ORANGE, (40, 108, 133, 198, 313, 876, 818, 473)), # dot sticker
-    (ORANGE, (22, 61, 107, 178, 212, 362, 421, 289)), # specdrum
-    (YELLOW, (33, 96, 128, 322, 472, 539, 530, 341)), # LEGO
-    (YELLOW, (38, 106, 135, 440, 547, 585, 580, 393)), # dot sticker
-    (GREEN, (11, 73, 99, 200, 134, 76, 69, 47)), # LEGO
-    (GREEN, (23, 85, 153, 506, 401, 233, 168, 137)), # dot sticker
-    (BLUE, (18, 220, 176, 157, 99, 78, 84, 61)),
-    (PINK, (38, 232, 152, 113, 156, 567, 691, 420))
+    (BLACK, (4.0811, -2.127, -5.5206)), # table
+    (WHITE, (42.1413, -1.7207, -21.789)), # paper
+    (RED, (3.9501, 9.3176, 1.5597)), # dot sticker
+    (RED, (6.1586, 20.0941, 6.7464)), # crayola marker
+    (ORANGE, (18.9638, 35.4737, 25.5502)), # dot sticker
+    (ORANGE, (7.1279, 20.3982, 9.4602)), # crayola marker
+    (YELLOW, (18.1606, -3.3514, 21.4392)), # dot sticker
+    (YELLOW, (18.8557, -9.6362, 22.0842)), # crayola marker
+    (GREEN, (13.071, -20.2436, 14.3274)), # dot sticker
+    (GREEN, (7.622, -10.9581, 2.4023)), # LEGO
+    (GREEN, (10.5382, -16.8222, 7.805)), # crayola marker
+    (BLUE, (4.6772, 6.9863, -22.3077)), # dot sticker
+    (BLUE, (5.2427, 11.1113, -27.3197)), # crayola marker
+    (PINK, (8.5591, 24.1974, 6.9332)), # dot sticker
+    (PINK, (3.4442, 9.3842, -22.7482)), # crayola marker (purple)
 ]
 
-sensor.led_current = 5
-sensor.led = False
+# https://stackoverflow.com/a/16020102
+def rgb2lab ( inputColor ) :
 
-# sensor.gain = 0.5
-# sensor.gain = Gain.GAIN_0_5X
-# sensor.gain = Gain.GAIN_512X
+   num = 0
+   RGB = [0, 0, 0]
 
-sensor.atime = 1
+   for value in inputColor :
+       value = float(value) / 255
 
-# time to read all channels
-# default atime 100 astep 999
-# default settings: 0.625
-# atime 10: 0.12
+       if value > 0.04045 :
+           value = ( ( value + 0.055 ) / 1.055 ) ** 2.4
+       else :
+           value = value / 12.92
+
+       RGB[num] = value * 100
+       num = num + 1
+
+   XYZ = [0, 0, 0,]
+
+   X = RGB [0] * 0.4124 + RGB [1] * 0.3576 + RGB [2] * 0.1805
+   Y = RGB [0] * 0.2126 + RGB [1] * 0.7152 + RGB [2] * 0.0722
+   Z = RGB [0] * 0.0193 + RGB [1] * 0.1192 + RGB [2] * 0.9505
+   XYZ[ 0 ] = round( X, 4 )
+   XYZ[ 1 ] = round( Y, 4 )
+   XYZ[ 2 ] = round( Z, 4 )
+
+   XYZ[ 0 ] = float( XYZ[ 0 ] ) / 95.047         # ref_X =  95.047   Observer= 2°, Illuminant= D65
+   XYZ[ 1 ] = float( XYZ[ 1 ] ) / 100.0          # ref_Y = 100.000
+   XYZ[ 2 ] = float( XYZ[ 2 ] ) / 108.883        # ref_Z = 108.883
+
+   num = 0
+   for value in XYZ :
+
+       if value > 0.008856 :
+           value = value ** ( 0.3333333333333333 )
+       else :
+           value = ( 7.787 * value ) + ( 16 / 116 )
+
+       XYZ[num] = value
+       num = num + 1
+
+   Lab = [0, 0, 0]
+
+   L = ( 116 * XYZ[ 1 ] ) - 16
+   a = 500 * ( XYZ[ 0 ] - XYZ[ 1 ] )
+   b = 200 * ( XYZ[ 1 ] - XYZ[ 2 ] )
+
+   Lab [ 0 ] = round( L, 4 )
+   Lab [ 1 ] = round( a, 4 )
+   Lab [ 2 ] = round( b, 4 )
+
+   return Lab
 
 def bar_graph(read_value):
     scaled = int(read_value / 1000)
@@ -93,7 +139,7 @@ def bar_graph(read_value):
 
 def color_distance(input, target):
     sum = 0
-    for i in range(8):
+    for i in range(3):
         sum += (target[i] - input[i])**2
     return math.sqrt(sum)
 
@@ -116,27 +162,27 @@ while True:
         if key_down != None:
             release(key_down)
     else:
-        t = time.monotonic()
+#         t = time.monotonic()
         sensor.led = True
-        sensor_channels = sensor.all_channels
-        print(sensor_channels)
+        sensor_channels = rgb2lab(sensor.color_rgb_bytes)
         distances = []
         for color, value in values:
             distances.append(color_distance(sensor_channels, value))
         closestIndex = distances.index(min(distances))
         closestColor, v = values[closestIndex]
-        print(time.monotonic() - t)
+#         print(time.monotonic() - t)
+        print(sensor_channels)
 
         if closestColor == WHITE or closestColor == BLACK:
-            # if a key is down release it
+#             if a key is down release it
             if key_down != None:
                 release(key_down)
         else:
-            # if no key is down, press a key
+#             if no key is down, press a key
             if key_down == None:
                 press(closestColor)
             else:
-                # if a key is down, but we see a different color, release and press the new key
+#                 if a key is down, but we see a different color, release and press the new key
                 if key_down != closestColor.key:
                     keyboard.release(key_down)
                     press(closestColor)
